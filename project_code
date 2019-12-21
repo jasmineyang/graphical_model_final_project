@@ -16,24 +16,24 @@ trainset = ratings %>%
   group_by(userId) %>%
   sample_n(floor(0.8*n()))
 
-testset = merge(trainset,ratings,by = c("userId","movieId"),all = TRUE)
+testset = merge(trainset,ratings,by = c("userId","questionId"),all = TRUE)
 testset = testset[is.na(testset$rating.x),]
 
 train.userId = as.numeric(factor(trainset$userId))
 
 IRM = list(J = length(unique(userId)),
-           K= max(movieId),
+           K= max(questionId),
            N=length(trainset$rating),
            jj = train.userId,
-           kk = trainset$movieId,
+           kk = trainset$questionId,
            y = trainset$rating)
 
 
 fit_ratings = stan(file = 'Item_Response_Theory_Models.stan', data = IRM,
                    chains = 2,init = 1,warmup = 1500 )
 
-fit_ratings_2 = stan(file = 'Item_Response_Theory_Models.stan', data = IRM,iter = 6000,
-                     warmup = 4000)
+fit_ratings_2 = stan(file = 'Item_Response_Theory_Models.stan', data = IRM,iter = 3000,
+                     warmup = 1500)
 
 
 fit_ratings_out = extract(fit_ratings_2 , permuted = TRUE)
@@ -66,12 +66,12 @@ alpha = fit_ratings_out$alpha[rowsize,]
 gamma = fit_ratings_out$gamma[rowsize,]
 mu_beta = fit_ratings_out$mu_beta[rowsize]
 
-
+#posterior prediction
 test.userId = as.numeric(factor(testset$userId))
 
 test.y = rep(0,2459)
 for(i in 1:2459){
-  test.y[i] = gamma[testset$movieId[i]] * (alpha[test.userId[i]] - (betas[testset$movieId[i]] + mu_beta))  
+  test.y[i] = gamma[testset$questionId[i]] * (alpha[test.userId[i]] - (betas[testset$questionId[i]] + mu_beta))  
 }
 
 
@@ -106,11 +106,19 @@ barplot(counts, main="Car Distribution by Gears and VS",
 
 # create a dataset
 Engagement <- c(rep("0" , 2) , rep("1" , 2))
-condition <- rep(c("actual values", "predications") , 2)
-value <- c(sum(testset$rating.y == 0), sum(yp ==0), sum(testset$rating.y == 1),sum(yp ==1))
-data <- data.frame(Engagement,condition,value)
+Type <- rep(c("actual values", "predications") , 2)
+Number_of_questions <-c(sum(testset$rating.y == 0), sum(yp ==0), sum(testset$rating.y ==
+1),sum(yp ==1))
+data <- data.frame(Engagement,Type,Number_of_questions)
 
 # Grouped
+ggplot(data, aes(x=Engagement)) +
+geom_bar("dodgerblue3",aes(y=Number_of_questions))+
+labs(x="",y="Proportion")
+
+ggplot(data, aes(y=Number_of_questions , x=Engagement, fill = Type)) +
+geom_histogram(stat="identity", width = 0.6, position='dodge', fill = c("blue", "dark blue"))
+
 ggplot(data, aes(fill=condition, y=value, x=Engagement)) + 
   geom_bar(position="dodge", stat="identity")
 
@@ -121,23 +129,66 @@ ps = sample(unique(userId),6)
 ps
 
 
-
+# Plot the histograms for the number of games played each week
 for (i in 1:6) {
   test1 = testset[testset$userId == ps[i],]
   
   index1 = which(testset$userId == ps[i])
   testps1 = y_test[index1]
   
-  # create a dataset
+ # create a dataset
   specie <- c(rep("0" , 2) , rep("1" , 2))
   condition <- rep(c("actual values", "predications") , 2)
   value <- c(sum(test1$rating.y == 0), sum(testps1 ==0), sum(test1$rating.y == 1),sum(testps1 ==1))
   data <- data.frame(specie,condition,value)
   
-  # Grouped
+ # Grouped
   plots[[i]] = ggplot(data, aes(fill=condition, y=value, x=specie)) + 
     geom_bar(position="dodge", stat="identity")
 }
 
 ggarrange(plots[[1]], plots[[2]], plots[[3]], plots[[4]], plots[[5]], plots[[6]], ncol = 3,nrow = 2)
+
+beta = betas
+1.191
+par(mfrow = c(3,1))
+hist(alpha, breaks = 120, col = "blue")
+hist(beta, breaks = 120, col = "blue")
+hist(gamma, breaks = 120, col = "blue")
+
+#six testing recommendations
+ratings$userId = factor(ratings$userId)
+ratings_wide = spread(ratings, questionId, rating)
+P1 = ratings_wide[ratings_wide$userId == ps[1], ]
+P1_long
+
+rec = as.data.frame(matrix(rep(0,6*5170), nrow = 6, ncol = 5170))
+
+#have to convert matrix to dataframe to store data
+
+for (i in 1:6) {
+   rec[i,] = ratings_wide[ratings_wide$userId == ps[i],]
+}
+colnames(rec) = colnames(ratings_wide) #rename
+rating_long <- gather(rec, questionId, rating, 2:5170, factor_key=FALSE)
+
+rec.y = rep(0,31014)
+for(i in 1:31014){
+rec.y[i] = gamma[rating_long$questionId[i]] * (alpha[rating_long$userId[i]]
+(betas[rating_long$questionId[i]] + mu_beta))
+}
+
+rating_long <- rating_long[ord er(rating_long$userId),]
+rating_long$questionId = as.numeric(rating_long$questionId)
+rec_prob = trans(rec.y)
+
+recom = data.frame(rating_long[-3],rec_prob)
+recom_order = recom %>%
+    group_by(userId) %>%
+    arrange(
+    desc(rec_prob)
+)
+top_n(7)
+```
+```
 
