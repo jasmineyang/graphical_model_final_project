@@ -1,0 +1,143 @@
+library(rstan)
+library(coda)
+library(Rlab)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+ratings = read.csv('./myData.csv', header = TRUE, sep = ',')
+attach(ratings)
+#rating = rating[rating$rating != "NA",]
+set.seed(908)
+
+trainset = ratings %>%
+  group_by(userId) %>%
+  sample_n(floor(0.8*n()))
+
+testset = merge(trainset,ratings,by = c("userId","movieId"),all = TRUE)
+testset = testset[is.na(testset$rating.x),]
+
+train.userId = as.numeric(factor(trainset$userId))
+
+IRM = list(J = length(unique(userId)),
+           K= max(movieId),
+           N=length(trainset$rating),
+           jj = train.userId,
+           kk = trainset$movieId,
+           y = trainset$rating)
+
+
+fit_ratings = stan(file = 'Item_Response_Theory_Models.stan', data = IRM,
+                   chains = 2,init = 1,warmup = 1500 )
+
+fit_ratings_2 = stan(file = 'Item_Response_Theory_Models.stan', data = IRM,iter = 6000,
+                     warmup = 4000)
+
+
+fit_ratings_out = extract(fit_ratings_2 , permuted = TRUE)
+
+trans = function(x) {
+  exp(x)/(1+exp(x))
+}
+
+N = length(trainset$rating)
+
+new_train = fit_ratings_out$log_odds
+prob_train = apply(new_train,2,trans)
+
+rowsize = nrow(prob_train)
+
+prob = prob_train[rowsize,]
+set.seed(928)
+y_train = ifelse(prob >= 0.5, 1, 0)
+
+# log loss for training
+logloss_train = ifelse(trainset$rating == 1, -log(prob), -log(1-prob))
+plot(prob,logloss_train)
+
+# training error
+trainerr = (length(which(y_train-trainset$rating != 0)))/N
+trainerr
+
+betas = fit_ratings_out$beta[rowsize,]
+alpha = fit_ratings_out$alpha[rowsize,]
+gamma = fit_ratings_out$gamma[rowsize,]
+mu_beta = fit_ratings_out$mu_beta[rowsize]
+
+
+test.userId = as.numeric(factor(testset$userId))
+
+test.y = rep(0,2459)
+for(i in 1:2459){
+  test.y[i] = gamma[testset$movieId[i]] * (alpha[test.userId[i]] - (betas[testset$movieId[i]] + mu_beta))  
+}
+
+
+# logit_simple = as.matrix(simple_test) %*% betas_simple+ rnorm(n=nrow(simple_test),0,sigma)
+pred_prob = trans(test.y)
+yp = rbern(n = nrow(testset),prob = pred_prob)
+
+# for (i in 1:length(pred_prob)){
+#   if (is.na(pred_prob_simple[i])){
+#     pred_prob_simple[i] = 1
+#   }
+# }
+# #pred_comp = as.numeric(pred_prob > 0.5)
+# 
+# test error
+y_test = ifelse(pred_prob >= 0.5, 1, 0)
+testerr= (length(which(y_test-testset$rating.y != 0)))/N
+testerr
+
+logloss_train = ifelse(testset$rating.y == 1, -log(pred_prob), -log(1-pred_prob))
+plot(pred_prob,logloss_train)
+
+# print(fit_simple, pars=c('beta','sigma'))
+# plot(fit_simple,pars=c('beta','sigma'))
+# effectiveSize(fit_simple_out$beta)
+# effectiveSize(fit_simple_out$sigma)
+
+counts = table(testset$rating.y, yp)
+barplot(counts, main="Car Distribution by Gears and VS",
+        xlab="Number of Gears", col=c("darkblue","red"),
+        legend = rownames(counts), beside=TRUE)
+
+# create a dataset
+Engagement <- c(rep("0" , 2) , rep("1" , 2))
+condition <- rep(c("actual values", "predications") , 2)
+value <- c(sum(testset$rating.y == 0), sum(yp ==0), sum(testset$rating.y == 1),sum(yp ==1))
+data <- data.frame(Engagement,condition,value)
+
+# Grouped
+ggplot(data, aes(fill=condition, y=value, x=Engagement)) + 
+  geom_bar(position="dodge", stat="identity")
+
+
+#testing in 5 indiviudals
+set.seed(908)
+ps = sample(unique(userId),6)
+ps
+
+
+
+for (i in 1:6) {
+  test1 = testset[testset$userId == ps[i],]
+  
+  index1 = which(testset$userId == ps[i])
+  testps1 = y_test[index1]
+  
+  # create a dataset
+  specie <- c(rep("0" , 2) , rep("1" , 2))
+  condition <- rep(c("actual values", "predications") , 2)
+  value <- c(sum(test1$rating.y == 0), sum(testps1 ==0), sum(test1$rating.y == 1),sum(testps1 ==1))
+  data <- data.frame(specie,condition,value)
+  
+  # Grouped
+  plots[[i]] = ggplot(data, aes(fill=condition, y=value, x=specie)) + 
+    geom_bar(position="dodge", stat="identity")
+}
+
+ggarrange(plots[[1]], plots[[2]], plots[[3]], plots[[4]], plots[[5]], plots[[6]], ncol = 3,nrow = 2)
+
